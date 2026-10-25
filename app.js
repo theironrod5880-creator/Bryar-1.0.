@@ -1,163 +1,148 @@
-'use strict';
-
-(function () {
-  const roomDescriptions = {
-    general: 'A friendly space for everyday conversation and questions.',
-    introductions: 'Say hello and share only what you feel comfortable sharing.',
-    'ideas-and-projects': 'Bring a question, a sketch, or an idea you want to explore.'
+(() => {
+  const $ = id => document.getElementById(id);
+  const authPanel = $("authPanel"), appPanel = $("appPanel");
+  const roomNames = ["general", "introductions", "ideas-and-projects"];
+  let currentRoom = "general", socket = null, config = {}, localStream = null, peer = null, pendingOffer = null;
+  const rtcConfig = () => ({ iceServers: [{ urls: config.stunUrl || "stun:stun.l.google.com:19302" }] });
+  async function api(url, options = {}) {
+    const response = await fetch(url, { credentials: "same-origin", headers: { "Content-Type": "application/json" }, ...options });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Request failed.");
+    return data;
+  }
+  function status(id, text) { $(id).textContent = text; }
+  function showLoggedIn(user) {
+    authPanel.classList.add("hidden"); appPanel.classList.remove("hidden"); $("logoutBtn").classList.remove("hidden");
+    status("connectionState", `Signed in as ${user.username}`);
+    connectSocket(); renderRooms(); joinRoom(currentRoom);
+  }
+  async function checkSession() {
+    try { config = await api("/api/config"); const result = await api("/api/me"); config = { ...config, user: result.user }; setupAds(); if (result.user) showLoggedIn(result.user); }
+    catch (e) { status("authStatus", e.message); }
+  }
+  $("loginBtn").onclick = async () => {
+    try { const r = await api("/api/login", { method: "POST", body: JSON.stringify({ username: $("username").value.trim(), password: $("password").value }) }); showLoggedIn(r.user); }
+    catch (e) { status("authStatus", e.message); }
   };
-  let currentRoom = 'general';
-  const messagesEl = document.getElementById('messages');
-  const form = document.getElementById('messageForm');
-  const input = document.getElementById('messageInput');
-  const toastEl = document.getElementById('toast');
-  let toastTimer;
-
-  function toast(message) {
-    toastEl.textContent = message;
-    toastEl.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
-  }
-
-  function roomTitle(room) {
-    return '# ' + room;
-  }
-
-  function switchRoom(room) {
-    currentRoom = room;
-    document.querySelectorAll('.room').forEach(button => {
-      const active = button.dataset.room === room;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-current', active ? 'page' : 'false');
+  $("registerBtn").onclick = async () => {
+    try { const r = await api("/api/register", { method: "POST", body: JSON.stringify({ username: $("username").value.trim(), password: $("password").value }) }); showLoggedIn(r.user); }
+    catch (e) { status("authStatus", e.message); }
+  };
+  $("logoutBtn").onclick = async () => { await api("/api/logout", { method: "POST" }); if (socket) socket.disconnect(); location.reload(); };
+  function connectSocket() {
+    if (socket) return;
+    socket = io();
+    socket.on("connect", () => status("connectionState", "Live · connected"));
+    socket.on("disconnect", () => status("connectionState", "Reconnecting…"));
+    socket.on("connect_error", e => status("connectionState", e.message));
+    socket.on("room:history", messages => { $("messages").replaceChildren(); messages.forEach(renderMessage); });
+    socket.on("chat:message", renderMessage);
+    socket.on("presence", p => addSystem(`${p.username} ${p.state} the room.`));
+    socket.on("call:offer", async data => {
+      pendingOffer = data;
+      $("callPanel").classList.remove("hidden");
+      status("callStatus", `${data.from} is calling. Accept to enable your camera/microphone.`);
+      $("acceptBtn").classList.remove("hidden");
     });
-    document.getElementById('roomTitle').textContent = roomTitle(room);
-    document.getElementById('composerRoom').textContent = roomTitle(room);
-    document.getElementById('aboutTitle').textContent = room;
-    document.getElementById('aboutDescription').textContent = roomDescriptions[room] || 'A community room.';
-    renderRoomMessages();
+    socket.on("call:answer", async data => { if (peer && data.answer) await peer.setRemoteDescription(data.answer); });
+    socket.on("call:ice", async data => { if (peer && data.candidate) { try { await peer.addIceCandidate(data.candidate); } catch (_) {} } });
+    socket.on("call:hangup", () => cleanupCall("The other participant ended the call."));
   }
-
-  function createMessage(role, name, content, tagText, avatarText) {
-    const article = document.createElement('article');
-    article.className = 'message';
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar ' + (role === 'user' ? 'user-avatar' : 'bryar-avatar');
-    avatar.textContent = avatarText;
-    const body = document.createElement('div');
-    body.className = 'message-body';
-    const meta = document.createElement('div');
-    meta.className = 'message-meta';
-    const strong = document.createElement('strong');
-    strong.textContent = name;
-    meta.appendChild(strong);
-    if (tagText) {
-      const tag = document.createElement('span');
-      tag.className = role === 'user' ? 'system-tag' : 'ai-tag';
-      tag.textContent = tagText;
-      meta.appendChild(tag);
-    }
-    const time = document.createElement('time');
-    time.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    meta.appendChild(time);
-    const p = document.createElement('p');
-    p.textContent = content;
-    body.append(meta, p);
-    article.append(avatar, body);
-    return article;
+  function renderRooms() {
+    const tabs = $("roomTabs"); tabs.replaceChildren();
+    roomNames.forEach(name => {
+      const b = document.createElement("button"); b.className = "room-tab" + (name === currentRoom ? " active" : ""); b.textContent = "# " + name;
+      b.onclick = () => joinRoom(name); tabs.appendChild(b);
+    });
   }
-
-  function renderRoomMessages() {
-    messagesEl.replaceChildren();
-    const divider = document.createElement('div');
-    divider.className = 'day-divider';
-    const label = document.createElement('span');
-    label.textContent = roomTitle(currentRoom).toUpperCase();
-    divider.appendChild(label);
-    messagesEl.appendChild(divider);
-    let stored = { ok: false, messages: [] };
-    if (window.BROD_CHAT_STORE) {
-      const all = BROD_CHAT_STORE.list();
-      const match = all.find(thread => thread.title === 'room:' + currentRoom);
-      if (match) stored = BROD_CHAT_STORE.getMessages(match.id);
-    }
-    if (stored.ok && stored.messages.length) {
-      stored.messages.forEach(message => {
-        messagesEl.appendChild(createMessage(message.role === 'user' ? 'user' : 'ai', message.role === 'user' ? 'You' : 'Bryar Companion', message.content, message.role === 'user' ? 'MEMBER' : 'AI DEMO', message.role === 'user' ? 'Y' : 'B'));
-      });
-    } else {
-      const intro = currentRoom === 'general'
-        ? 'Welcome in. This is the local Bryar chat preview. Messages you send are saved on this device only.'
-        : (roomDescriptions[currentRoom] || 'Welcome to this room.') + ' This is a local preview; no other members are connected yet.';
-      messagesEl.appendChild(createMessage('ai', 'Bryar Companion', intro, 'AI COMPANION DEMO', 'B'));
-    }
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+  function joinRoom(name) {
+    currentRoom = name; $("currentRoomTitle").textContent = "# " + name; $("postingRoom").textContent = "#" + name;
+    renderRooms(); $("messages").replaceChildren();
+    if (socket?.connected) socket.emit("room:join", name, result => { if (result?.error) addSystem(result.error); });
   }
-
-  function getOrCreateRoomThread() {
-    if (!window.BROD_CHAT_STORE) return null;
-    const title = 'room:' + currentRoom;
-    const found = BROD_CHAT_STORE.list().find(thread => thread.title === title);
-    if (found) return found.id;
-    const created = BROD_CHAT_STORE.create({ title });
-    return created.ok ? created.thread.id : null;
+  $("newRoomBtn").onclick = () => {
+    const value = prompt("Room name (letters, numbers, hyphens):");
+    if (!value) return;
+    const name = value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+    if (name.length < 2) return alert("Use at least two letters or numbers.");
+    if (!roomNames.includes(name)) roomNames.push(name);
+    joinRoom(name);
+  };
+  function renderMessage(m) {
+    if (m.room !== currentRoom) return;
+    const wrap = document.createElement("article"); wrap.className = "message";
+    const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = (m.username || "?").slice(0,1).toUpperCase();
+    const content = document.createElement("div"); content.className = "message-content";
+    const meta = document.createElement("div"); meta.className = "message-meta";
+    const user = document.createElement("strong"); user.textContent = m.username || "Member";
+    const time = document.createElement("time"); time.textContent = m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "now";
+    const body = document.createElement("p"); body.textContent = m.body;
+    meta.append(user, time); content.append(meta, body); wrap.append(avatar, content); $("messages").append(wrap); $("messages").scrollTop = $("messages").scrollHeight;
   }
-
-  form.addEventListener('submit', function (event) {
-    event.preventDefault();
-    const content = input.value.trim();
-    if (!content) return;
-    const threadId = getOrCreateRoomThread();
-    if (!threadId) {
-      toast('Could not save this message. Check local storage or remove an old chat.');
-      return;
-    }
-    const result = BROD_CHAT_STORE.appendMessage(threadId, 'user', content);
-    if (!result.ok) {
-      toast('Message could not be saved: ' + result.error);
-      return;
-    }
-    input.value = '';
-    input.style.height = 'auto';
-    renderRoomMessages();
-    toast('Saved on this device. No other people are connected yet.');
-  });
-
-  input.addEventListener('input', function () {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-  });
-  input.addEventListener('keydown', function (event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      form.requestSubmit();
-    }
-  });
-  document.getElementById('roomList').addEventListener('click', function (event) {
-    const button = event.target.closest('[data-room]');
-    if (button) switchRoom(button.dataset.room);
-  });
-  document.getElementById('newRoomBtn').addEventListener('click', function () {
-    const raw = window.prompt('Name your room (letters, numbers, and hyphens):');
-    if (!raw) return;
-    const room = raw.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
-    if (!room) { toast('Please enter a valid room name.'); return; }
-    if (document.querySelector('[data-room="' + room + '"]')) { switchRoom(room); return; }
-    const button = document.createElement('button');
-    button.className = 'room';
-    button.dataset.room = room;
-    button.type = 'button';
-    const hash = document.createElement('span');
-    hash.textContent = '#';
-    button.append(hash, document.createTextNode(' ' + room));
-    document.getElementById('roomList').appendChild(button);
-    roomDescriptions[room] = 'A room created in this local preview.';
-    switchRoom(room);
-    toast('Room created for this browser preview.');
-  });
-  document.getElementById('audioBtn').addEventListener('click', () => toast('Audio calling is planned; it is not connected in this starter.'));
-  document.getElementById('videoBtn').addEventListener('click', () => toast('Video calling is planned; it is not connected in this starter.'));
-  document.getElementById('profileBtn').addEventListener('click', () => toast('Profile accounts are not configured in this starter.'));
-
-  switchRoom('general');
+  function addSystem(text) { const p = document.createElement("p"); p.className = "system-note"; p.textContent = text; $("messages").append(p); }
+  $("messageForm").onsubmit = e => {
+    e.preventDefault(); const body = $("messageInput").value.trim(); if (!body || !socket) return;
+    socket.emit("chat:send", { room: currentRoom, body }, result => { if (result?.error) addSystem(result.error); });
+    $("messageInput").value = "";
+  };
+  $("messageInput").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("messageForm").requestSubmit(); } });
+  $("askAiBtn").onclick = async () => {
+    const message = $("messageInput").value.trim() || prompt("What would you like to ask Bryar Companion?");
+    if (!message) return;
+    status("aiState", "Bryar is thinking…"); $("askAiBtn").disabled = true;
+    try {
+      const result = await api("/api/ai", { method: "POST", body: JSON.stringify({ room: currentRoom, message }) });
+      socket.emit("chat:send", { room: currentRoom, body: "✦ Bryar Companion: " + result.reply });
+      status("aiState", "AI reply posted to this room.");
+    } catch (e) { status("aiState", e.message); }
+    finally { $("askAiBtn").disabled = false; }
+  };
+  async function startCall(video) {
+    try {
+      if (!socket?.connected) throw new Error("Connect to chat before starting a call.");
+      $("callPanel").classList.remove("hidden");
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+      $("localVideo").srcObject = localStream;
+      peer = new RTCPeerConnection(rtcConfig());
+      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+      peer.ontrack = e => { $("remoteVideo").srcObject = e.streams[0]; };
+      peer.onicecandidate = e => { if (e.candidate) socket.emit("call:ice", { room: currentRoom, candidate: e.candidate }); };
+      status("callStatus", "Calling room members… They must accept before media is shared.");
+      const offer = await peer.createOffer(); await peer.setLocalDescription(offer);
+      socket.emit("call:offer", { room: currentRoom, offer, video });
+    } catch (e) { cleanupCall(e.message); }
+  }
+  $("voiceBtn").onclick = () => startCall(false);
+  $("videoBtn").onclick = () => startCall(true);
+  $("acceptBtn").onclick = async () => {
+    if (!pendingOffer) return;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: Boolean(pendingOffer.video) });
+      $("localVideo").srcObject = localStream; peer = new RTCPeerConnection(rtcConfig());
+      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+      peer.ontrack = e => { $("remoteVideo").srcObject = e.streams[0]; };
+      peer.onicecandidate = e => { if (e.candidate) socket.emit("call:ice", { room: currentRoom, candidate: e.candidate }); };
+      await peer.setRemoteDescription(pendingOffer.offer);
+      const answer = await peer.createAnswer(); await peer.setLocalDescription(answer);
+      socket.emit("call:answer", { room: currentRoom, answer }); pendingOffer = null; $("acceptBtn").classList.add("hidden");
+      status("callStatus", "Call connected if the peer connection succeeds.");
+    } catch (e) { cleanupCall(e.message); }
+  };
+  $("hangupBtn").onclick = () => { socket?.emit("call:hangup", { room: currentRoom }); cleanupCall("Call ended."); };
+  function cleanupCall(message) {
+    if (peer) peer.close(); peer = null;
+    if (localStream) localStream.getTracks().forEach(t => t.stop()); localStream = null;
+    $("localVideo").srcObject = null; $("remoteVideo").srcObject = null; $("acceptBtn").classList.add("hidden");
+    status("callStatus", message);
+  }
+  function setupAds() {
+    if (!config.adsEnabled) return;
+    $("adSlot").classList.remove("hidden");
+    if (config.adScriptUrl) {
+      const script = document.createElement("script"); script.src = config.adScriptUrl; script.async = true; script.crossOrigin = "anonymous";
+      script.onerror = () => { $("adContent").textContent = "Sponsored content is unavailable."; };
+      document.head.append(script);
+    } else $("adContent").textContent = "Ad placement reserved. Configure a reviewed ad provider URL on the server.";
+  }
+  checkSession();
 })();
