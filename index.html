@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Bryar 1.0 — a community chatroom concept with a helpful AI companion.">
+  <title>Bryar 1.0 — Community Chat</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="brand"><div class="brand-mark">B</div><div><strong>Bryar <span>1.0</span></strong><small>Community space</small></div></div>
+      <button class="new-room" id="newRoomBtn" type="button">＋ New room</button>
+      <div class="side-label">YOUR ROOMS</div>
+      <nav id="roomList" class="room-list" aria-label="Chat rooms">
+        <button class="room active" data-room="general" type="button"><span>#</span> general</button>
+        <button class="room" data-room="introductions" type="button"><span>#</span> introductions</button>
+        <button class="room" data-room="ideas" type="button"><span>#</span> ideas-and-projects</button>
+      </nav>
+      <div class="sidebar-bottom"><div class="status-dot"></div><div><strong>Local preview</strong><small>Messages stay on this device</small></div></div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div class="room-heading"><div class="eyebrow">ROOM</div><h1 id="roomTitle"># general</h1><p>A welcoming place to talk, share ideas, and learn.</p></div>
+        <div class="top-actions"><button class="icon-button" id="audioBtn" type="button" title="Audio chat" aria-label="Audio chat">♫ <span>Audio</span></button><button class="icon-button" id="videoBtn" type="button" title="Video chat" aria-label="Video chat">▣ <span>Video</span></button><button class="avatar" id="profileBtn" type="button" aria-label="Profile settings">Y</button></div>
+      </header>
+
+      <section class="notice" aria-label="Preview notice"><span class="notice-icon">✦</span><div><strong>Bryar is in preview mode</strong><p>This starter includes a local chat demo. Real multi-person messaging, connected AI, and live calls need server and service setup.</p></div></section>
+
+      <section class="messages" id="messages" aria-live="polite" aria-label="Messages">
+        <div class="day-divider"><span>WELCOME TO BRYAR</span></div>
+        <article class="message"><div class="message-avatar bryar-avatar">B</div><div class="message-body"><div class="message-meta"><strong>Bryar Companion</strong><span class="ai-tag">AI COMPANION DEMO</span><time>Just now</time></div><p>Welcome in. I'm the Bryar companion preview. This room is a place for respectful conversation, curious questions, and good ideas. What would you like to talk about?</p></div></article>
+        <article class="message"><div class="message-avatar system-avatar">i</div><div class="message-body"><div class="message-meta"><strong>Room guide</strong><span class="system-tag">COMMUNITY</span></div><p>Keep it respectful. Protect private information. Disagree with ideas without attacking people. You can review the community principles in <code>moderation.js</code>.</p></div></article>
+      </section>
+
+      <div class="composer-wrap"><div class="composer-tools"><span>Posting in <strong id="composerRoom"># general</strong></span><span class="local-label"><span class="status-dot"></span> Local demo</span></div><form class="composer" id="messageForm"><label class="sr-only" for="messageInput">Write a message</label><textarea id="messageInput" rows="1" maxlength="20000" placeholder="Message this room…" required></textarea><button class="send-button" type="submit" aria-label="Send message">↑</button></form><div class="composer-foot"><span>Be kind. Think before you send.</span><span><kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for a new line</span></div></div>
+      <footer class="footer">Bryar 1.0 · Starter build · Not yet connected to a live server</footer>
+    </main>
+
+    <aside class="rightbar" aria-label="Room details"><div class="right-heading"><span class="online-dot"></span><strong>About this room</strong></div><div class="room-card"><div class="room-card-icon">#</div><h2 id="aboutTitle">general</h2><p id="aboutDescription">A friendly space for everyday conversation and questions.</p><div class="rule"></div><div class="detail-line"><span>Room type</span><strong>Public demo</strong></div><div class="detail-line"><span>Members</span><strong>Preview only</strong></div></div><div class="principles"><h3>Community principles</h3><ul><li><span>✓</span> Treat people with dignity</li><li><span>✓</span> Keep personal data private</li><li><span>✓</span> No threats or harassment</li><li><span>✓</span> Make room for different views</li></ul><p>These are starter guidelines, not an automated moderation system.</p></div><div class="ai-card"><div class="ai-card-top"><div class="mini-bot">✦</div><div><strong>Bryar Companion</strong><small>AI integration planned</small></div></div><p>The companion can be connected to an AI service after the server and safety rules are configured.</p></div></aside>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="brod-chat-store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
